@@ -3,76 +3,69 @@ import numpy as np
 from hftbacktest import BUY, SELL, GTX
 from numba import njit
 from hftbacktest import HftBacktest, FeedLatency, Linear, SquareProbQueueModel, Stat
+from calculators import (
+    measure_trading_intensity,
+    linear_regression,
+    compute_coeff
+)
+
+NS_IN_ONE_SECOND = 1000_000
+BUFFER_SIZE = 10_000_000
+MAX_REFIT_TICK_CNT = 500
+
+
+# Whole setting: 
+elapse_in_ns = 100_000
+
+# Related to Refit Calculation:
+refit_duration_in_second = 5
+window_size_in_second = 60
+refit_tick_cnt = 70
+assert refit_tick_cnt <= MAX_REFIT_TICK_CNT
+gamma = 0.05
+delta = 1
+adj1 = 1
+adj2 = 0.05
+
+# Related to grid setting
+order_qty = 1
+max_position = 20
+grid_num = 20
 
 @njit
-def measure_trading_intensity(order_arrival_depth, out):
-    max_tick = 0
-    for depth in order_arrival_depth:
-        if not np.isfinite(depth):
-            continue
+def calculate_nearest_bid_ask_price(hbt, mid_price_tick, half_spread, skew):
+    bid_depth = half_spread + skew * hbt.position
+    ask_depth = half_spread - skew * hbt.position
 
-        # Sets the tick index to 0 for the nearest possible best price
-        # as the order arrival depth in ticks is measured from the mid-price
-        tick = round(depth / .5) - 1
+    bid_price = min(mid_price_tick - bid_depth, hbt.best_bid_tick) * hbt.tick_size
+    ask_price = max(mid_price_tick + ask_depth, hbt.best_ask_tick) * hbt.tick_size
 
-        # In a fast-moving market, buy trades can occur below the mid-price (and vice versa for sell trades)
-        # since the mid-price is measured in a previous time-step;
-        # however, to simplify the problem, we will exclude those cases.
-        if tick < 0 or tick >= len(out):
-            continue
-
-        # All of our possible quotes within the order arrival depth,
-        # excluding those at the same price, are considered executed.
-        out[:tick] += 1
-
-        max_tick = max(max_tick, tick)
-    return out[:max_tick]
-
-@njit
-def linear_regression(x, y):
-    sx = np.sum(x)
-    sy = np.sum(y)
-    sx2 = np.sum(x ** 2)
-    sxy = np.sum(x * y)
-    w = len(x)
-    slope = (w * sxy - sx * sy) / (w * sx2 - sx**2)
-    intercept = (sy - slope * sx) / w
-    return slope, intercept
-
-@njit
-def compute_coeff(xi, gamma, delta, A, k):
-    inv_k = np.divide(1, k)
-    c1 = 1 / (xi * delta) * np.log(1 + xi * delta * inv_k)
-    c2 = np.sqrt(np.divide(gamma, 2 * A * delta * k) * ((1 + xi * delta * inv_k) ** (k / (xi * delta) + 1)))
-    return c1, c2
+    grid_interval = max(np.round(half_spread) * hbt.tick_size, hbt.tick_size)
+    bid_price = np.floor(bid_price / grid_interval) * grid_interval
+    ask_price = np.ceil(ask_price / grid_interval) * grid_interval
+    return bid_price, ask_price, grid_interval
 
 @njit
 def gridtrading_glft_mm(hbt, stat):
-    arrival_depth = np.full(10_000_000, np.nan, np.float64)
-    mid_price_chg = np.full(10_000_000, np.nan, np.float64)
-    out = np.full((10_000_000, 5), np.nan, np.float64)
-
+    arrival_depth = np.full(BUFFER_SIZE, np.nan, np.float64)
+    mid_price_chg = np.full(BUFFER_SIZE, np.nan, np.float64)
+    out = np.full((BUFFER_SIZE, 5), np.nan, np.float64)
+    elapse_cnt_in_second = NS_IN_ONE_SECOND // elapse_in_ns
+    update_duration = refit_duration_in_second * elapse_cnt_in_second
+    win_size = window_size_in_second * elapse_cnt_in_second
     t = 0
     prev_mid_price_tick = np.nan
     mid_price_tick = np.nan
-
-    tmp = np.zeros(500, np.float64)
+    half_spread = np.nan
+    skew = np.nan
+    tmp = np.zeros(MAX_REFIT_TICK_CNT, np.float64)
     ticks = np.arange(len(tmp)) + .5
-
     A = np.nan
     k = np.nan
     volatility = np.nan
-    gamma = 0.05
-    delta = 1
-    adj1 = 1
-    adj2 = 0.05
-
-    order_qty = 1
-    max_position = 20
-    grid_num = 20
-
-    # Checks every 10 milliseconds.
-    while hbt.elapse(100_000):
+    # Checks every 100 milliseconds.
+    while hbt.elapse(elapse_in_ns):
+        hbt.clear_last_trades()
         #--------------------------------------------------------
         # Records market order's arrival depth from the mid-price.
         if not np.isnan(mid_price_tick):
@@ -86,57 +79,39 @@ def gridtrading_glft_mm(hbt, stat):
                 else:
                     depth = np.nanmax([mid_price_tick - trade_price_tick, depth])
             arrival_depth[t] = depth
-
-        hbt.clear_last_trades()
-
         prev_mid_price_tick = mid_price_tick
         mid_price_tick = (hbt.best_bid_tick + hbt.best_ask_tick) / 2.0
-
         # Records the mid-price change for volatility calculation.
         mid_price_chg[t] = mid_price_tick - prev_mid_price_tick
-
         #--------------------------------------------------------
         # Calibrates A, k and calculates the market volatility.
-
-        # Updates A, k, and the volatility every 5-sec.
-        if t % 50 == 0:
-            # Window size is 10-minute.
-            if t >= 6_000 - 1:
+        if t % update_duration == 0:
+            if t >= win_size - 1:
                 # Calibrates A, k
                 tmp[:] = 0
-                lambda_ = measure_trading_intensity(arrival_depth[t + 1 - 6_000:t + 1], tmp)
-                lambda_ = lambda_[:70] / 600
+                lambda_ = measure_trading_intensity(
+                    arrival_depth[t + 1 - win_size:t + 1], tmp)
+                lambda_ = lambda_[:refit_tick_cnt] / window_size_in_second
                 x = ticks[:len(lambda_)]
                 y = np.log(lambda_)
                 k_, logA = linear_regression(x, y)
                 A = np.exp(logA)
                 k = -k_
-
                 # Updates the volatility.
-                volatility = np.nanstd(mid_price_chg[t + 1 - 6_000:t + 1]) * np.sqrt(10)
-        #--------------------------------------------------------
-        # Computes bid price and ask price.
-
-        c1, c2 = compute_coeff(gamma, gamma, delta, A, k)
-
-        half_spread = (c1 + delta / 2 * c2 * volatility) * adj1
-        skew = c2 * volatility * adj2
+                volatility = np.nanstd(
+                    mid_price_chg[t + 1 - win_size:t + 1]
+                ) * np.sqrt(elapse_cnt_in_second)
+                # 1 seconds 
+                #--------------------------------------------------------
+                # Computes bid price and ask price.
+                c1, c2 = compute_coeff(gamma, gamma, delta, A, k)
+                half_spread = (c1 + delta / 2 * c2 * volatility) * adj1
+                skew = c2 * volatility * adj2
         
-        bid_depth = half_spread + skew * hbt.position
-        ask_depth = half_spread - skew * hbt.position
-
-        bid_price = min(mid_price_tick - bid_depth, hbt.best_bid_tick) * hbt.tick_size
-        ask_price = max(mid_price_tick + ask_depth, hbt.best_ask_tick) * hbt.tick_size
-
-        grid_interval = max(np.round(half_spread) * hbt.tick_size, hbt.tick_size)
-        bid_price = np.floor(bid_price / grid_interval) * grid_interval
-        ask_price = np.ceil(ask_price / grid_interval) * grid_interval
-
+        bid_price, ask_price, grid_interval = calculate_nearest_bid_ask_price(hbt, mid_price_tick, half_spread, skew)
         #--------------------------------------------------------
         # Updates quotes.
-
         hbt.clear_inactive_orders()
-
         # Creates a new grid for buy orders.
         new_bid_orders = Dict.empty(np.int64, np.float64)
         if hbt.position < max_position and np.isfinite(bid_price):
@@ -183,7 +158,7 @@ def gridtrading_glft_mm(hbt, stat):
 
         t += 1
 
-        if t >= len(arrival_depth) or t >= len(mid_price_chg) or t >= len(out):
+        if t >= BUFFER_SIZE:
             raise Exception
 
         # Records the current state for stat calculation.
@@ -209,4 +184,4 @@ stat = Stat(hbt)
 
 out = gridtrading_glft_mm(hbt, stat.recorder)
 
-stat.summary(capital=10_000)
+stat.summary(capital=100_000)
