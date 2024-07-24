@@ -1,3 +1,4 @@
+from numba.typed import Dict
 import numpy as np
 from hftbacktest import BUY, SELL, GTX
 from numba import njit
@@ -45,9 +46,8 @@ def compute_coeff(xi, gamma, delta, A, k):
     c2 = np.sqrt(np.divide(gamma, 2 * A * delta * k) * ((1 + xi * delta * inv_k) ** (k / (xi * delta) + 1)))
     return c1, c2
 
-
 @njit
-def glft_market_maker(hbt, stat):
+def gridtrading_glft_mm(hbt, stat):
     arrival_depth = np.full(10_000_000, np.nan, np.float64)
     mid_price_chg = np.full(10_000_000, np.nan, np.float64)
     out = np.full((10_000_000, 5), np.nan, np.float64)
@@ -65,10 +65,11 @@ def glft_market_maker(hbt, stat):
     gamma = 0.05
     delta = 1
     adj1 = 1
-    adj2 = 0.05 # Uses the same value as gamma.
+    adj2 = 0.05
 
     order_qty = 1
     max_position = 20
+    grid_num = 20
 
     # Checks every 100 milliseconds.
     while hbt.elapse(100_000):
@@ -125,31 +126,53 @@ def glft_market_maker(hbt, stat):
         bid_depth = half_spread + skew * hbt.position
         ask_depth = half_spread - skew * hbt.position
 
-        bid_price = min(np.round(mid_price_tick - bid_depth), hbt.best_bid_tick) * hbt.tick_size
-        ask_price = max(np.round(mid_price_tick + ask_depth), hbt.best_ask_tick) * hbt.tick_size
+        bid_price = min(mid_price_tick - bid_depth, hbt.best_bid_tick) * hbt.tick_size
+        ask_price = max(mid_price_tick + ask_depth, hbt.best_ask_tick) * hbt.tick_size
+
+        grid_interval = max(np.round(half_spread) * hbt.tick_size, hbt.tick_size)
+        bid_price = np.floor(bid_price / grid_interval) * grid_interval
+        ask_price = np.ceil(ask_price / grid_interval) * grid_interval
 
         #--------------------------------------------------------
         # Updates quotes.
 
         hbt.clear_inactive_orders()
 
-        # Cancel orders if they differ from the updated bid and ask prices.
-        for order in hbt.orders.values():
-            if order.side == BUY and order.cancellable and order.price != bid_price:
-                hbt.cancel(order.order_id)
-            if order.side == SELL and order.cancellable and order.price != ask_price:
-                hbt.cancel(order.order_id)
-
-        # If the current position is within the maximum position,
-        # submit the new order only if no order exists at the same price.
+        # Creates a new grid for buy orders.
+        new_bid_orders = Dict.empty(np.int64, np.float64)
         if hbt.position < max_position and np.isfinite(bid_price):
-            bid_price_as_order_id = round(bid_price / hbt.tick_size)
-            if bid_price_as_order_id not in hbt.orders:
-                hbt.submit_buy_order(bid_price_as_order_id, bid_price, order_qty, GTX)
+            for i in range(grid_num):
+                bid_price -= i * grid_interval
+                bid_price_tick = round(bid_price / hbt.tick_size)
+
+                # order price in tick is used as order id.
+                new_bid_orders[bid_price_tick] = bid_price
+        for order in hbt.orders.values():
+            # Cancels if an order is not in the new grid.
+            if order.side == BUY and order.cancellable and order.order_id not in new_bid_orders:
+                hbt.cancel(order.order_id)
+        for order_id, order_price in new_bid_orders.items():
+            # Posts an order if it doesn't exist.
+            if order_id not in hbt.orders:
+                hbt.submit_buy_order(order_id, order_price, order_qty, GTX)
+
+        # Creates a new grid for sell orders.
+        new_ask_orders = Dict.empty(np.int64, np.float64)
         if hbt.position > -max_position and np.isfinite(ask_price):
-            ask_price_as_order_id = round(ask_price / hbt.tick_size)
-            if ask_price_as_order_id not in hbt.orders:
-                hbt.submit_sell_order(ask_price_as_order_id, ask_price, order_qty, GTX)
+            for i in range(grid_num):
+                ask_price += i * grid_interval
+                ask_price_tick = round(ask_price / hbt.tick_size)
+
+                # order price in tick is used as order id.
+                new_ask_orders[ask_price_tick] = ask_price
+        for order in hbt.orders.values():
+            # Cancels if an order is not in the new grid.
+            if order.side == SELL and order.cancellable and order.order_id not in new_ask_orders:
+                hbt.cancel(order.order_id)
+        for order_id, order_price in new_ask_orders.items():
+            # Posts an order if it doesn't exist.
+            if order_id not in hbt.orders:
+                hbt.submit_sell_order(order_id, order_price, order_qty, GTX)
 
         #--------------------------------------------------------
         # Records variables and stats for analysis.
@@ -186,6 +209,6 @@ hbt = HftBacktest(
 
 stat = Stat(hbt)
 
-out = glft_market_maker(hbt, stat.recorder)
+out = gridtrading_glft_mm(hbt, stat.recorder)
 
 stat.summary(capital=10_000)
