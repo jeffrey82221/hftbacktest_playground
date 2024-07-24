@@ -48,6 +48,7 @@ def calculate_nearest_bid_ask_price(hbt, mid_price_tick, half_spread, skew):
 @njit
 def gridtrading_glft_mm(hbt, stat):
     arrival_depth = np.full(BUFFER_SIZE, np.nan, np.float64)
+    mid_price_ticks = np.full(BUFFER_SIZE, np.nan, np.float64)
     mid_price_chg = np.full(BUFFER_SIZE, np.nan, np.float64)
     out = np.full((BUFFER_SIZE, 5), np.nan, np.float64)
     elapse_cnt_in_second = NS_IN_ONE_SECOND // elapse_in_ns
@@ -65,10 +66,11 @@ def gridtrading_glft_mm(hbt, stat):
     volatility = np.nan
     # Checks every 100 milliseconds.
     while hbt.elapse(elapse_in_ns):
-        hbt.clear_last_trades()
         #--------------------------------------------------------
+        mid_price_ticks[t] = (hbt.best_bid_tick + hbt.best_ask_tick) / 2.0
         # Records market order's arrival depth from the mid-price.
-        if not np.isnan(mid_price_tick):
+        if t >= 1:
+            mid_price_tick = mid_price_ticks[t - 1]
             depth = -np.inf
             for trade in hbt.last_trades:
                 side = trade[3]
@@ -79,10 +81,8 @@ def gridtrading_glft_mm(hbt, stat):
                 else:
                     depth = np.nanmax([mid_price_tick - trade_price_tick, depth])
             arrival_depth[t] = depth
-        prev_mid_price_tick = mid_price_tick
-        mid_price_tick = (hbt.best_bid_tick + hbt.best_ask_tick) / 2.0
-        # Records the mid-price change for volatility calculation.
-        mid_price_chg[t] = mid_price_tick - prev_mid_price_tick
+            mid_price_chg[t] = mid_price_ticks[t] - mid_price_ticks[t - 1]
+        hbt.clear_last_trades()
         #--------------------------------------------------------
         # Calibrates A, k and calculates the market volatility.
         if t % update_duration == 0:
@@ -109,9 +109,12 @@ def gridtrading_glft_mm(hbt, stat):
                 skew = c2 * volatility * adj2
         
         bid_price, ask_price, grid_interval = calculate_nearest_bid_ask_price(hbt, mid_price_tick, half_spread, skew)
+
         #--------------------------------------------------------
         # Updates quotes.
+
         hbt.clear_inactive_orders()
+
         # Creates a new grid for buy orders.
         new_bid_orders = Dict.empty(np.int64, np.float64)
         if hbt.position < max_position and np.isfinite(bid_price):
