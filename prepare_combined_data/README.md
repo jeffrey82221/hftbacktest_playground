@@ -11,5 +11,11 @@ the futures feed data.
 
 This is the format of ...
 
+2. How to determine lot, tick size? 
+
+
+3. Whether to use opt = 'mt'? 
+
+Use opt = 'mt', such that all information of feed data can be included. 
 
 
