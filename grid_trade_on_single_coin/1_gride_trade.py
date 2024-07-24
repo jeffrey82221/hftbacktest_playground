@@ -71,7 +71,7 @@ def gridtrading_glft_mm(hbt, stat):
     max_position = 20
     grid_num = 20
 
-    # Checks every 100 milliseconds.
+    # Checks every 10 milliseconds.
     while hbt.elapse(100_000):
         #--------------------------------------------------------
         # Records market order's arrival depth from the mid-price.
@@ -114,7 +114,6 @@ def gridtrading_glft_mm(hbt, stat):
 
                 # Updates the volatility.
                 volatility = np.nanstd(mid_price_chg[t + 1 - 6_000:t + 1]) * np.sqrt(10)
-
         #--------------------------------------------------------
         # Computes bid price and ask price.
 
@@ -122,7 +121,7 @@ def gridtrading_glft_mm(hbt, stat):
 
         half_spread = (c1 + delta / 2 * c2 * volatility) * adj1
         skew = c2 * volatility * adj2
-
+        
         bid_depth = half_spread + skew * hbt.position
         ask_depth = half_spread - skew * hbt.position
 
@@ -176,7 +175,6 @@ def gridtrading_glft_mm(hbt, stat):
 
         #--------------------------------------------------------
         # Records variables and stats for analysis.
-
         out[t, 0] = half_spread
         out[t, 1] = skew
         out[t, 2] = volatility
