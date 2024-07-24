@@ -6,7 +6,9 @@ from hftbacktest import HftBacktest, FeedLatency, Linear, SquareProbQueueModel, 
 from calculators import (
     measure_trading_intensity,
     linear_regression,
-    compute_coeff
+    compute_coeff,
+    record_arrival_depths,
+    calculate_nearest_bid_ask_price
 )
 
 NS_IN_ONE_SECOND = 1000_000
@@ -32,18 +34,36 @@ order_qty = 1
 max_position = 20
 grid_num = 20
 
+elapse_cnt_in_second = NS_IN_ONE_SECOND // elapse_in_ns
+
 @njit
-def calculate_nearest_bid_ask_price(hbt, mid_price_tick, half_spread, skew):
-    bid_depth = half_spread + skew * hbt.position
-    ask_depth = half_spread - skew * hbt.position
-
-    bid_price = min(mid_price_tick - bid_depth, hbt.best_bid_tick) * hbt.tick_size
-    ask_price = max(mid_price_tick + ask_depth, hbt.best_ask_tick) * hbt.tick_size
-
-    grid_interval = max(np.round(half_spread) * hbt.tick_size, hbt.tick_size)
-    bid_price = np.floor(bid_price / grid_interval) * grid_interval
-    ask_price = np.ceil(ask_price / grid_interval) * grid_interval
-    return bid_price, ask_price, grid_interval
+def fit_parameters(arrival_depth, mid_price_chg, ticks, tmp):
+    tmp[:] = 0
+    lambda_ = measure_trading_intensity(
+        arrival_depth, tmp)
+    lambda_ = lambda_[:refit_tick_cnt] / window_size_in_second
+    x = ticks[:len(lambda_)]
+    y = np.log(lambda_)
+    k_, logA = linear_regression(x, y)
+    A = np.exp(logA)
+    k = -k_
+    # Updates the volatility.
+    volatility = np.nanstd(
+        mid_price_chg
+    ) * np.sqrt(elapse_cnt_in_second)
+    # 1 seconds 
+    #--------------------------------------------------------
+    # Computes bid price and ask price.
+    c1, c2 = compute_coeff(gamma, gamma, delta, A, k)
+    half_spread = (c1 + delta / 2 * c2 * volatility) * adj1
+    skew = c2 * volatility * adj2
+    return (
+        half_spread,
+        skew,
+        volatility,
+        A,
+        k
+    )
 
 @njit
 def gridtrading_glft_mm(hbt, stat):
@@ -51,12 +71,7 @@ def gridtrading_glft_mm(hbt, stat):
     mid_price_ticks = np.full(BUFFER_SIZE, np.nan, np.float64)
     mid_price_chg = np.full(BUFFER_SIZE, np.nan, np.float64)
     out = np.full((BUFFER_SIZE, 5), np.nan, np.float64)
-    elapse_cnt_in_second = NS_IN_ONE_SECOND // elapse_in_ns
-    update_duration = refit_duration_in_second * elapse_cnt_in_second
-    win_size = window_size_in_second * elapse_cnt_in_second
     t = 0
-    prev_mid_price_tick = np.nan
-    mid_price_tick = np.nan
     half_spread = np.nan
     skew = np.nan
     tmp = np.zeros(MAX_REFIT_TICK_CNT, np.float64)
@@ -68,47 +83,34 @@ def gridtrading_glft_mm(hbt, stat):
     while hbt.elapse(elapse_in_ns):
         #--------------------------------------------------------
         mid_price_ticks[t] = (hbt.best_bid_tick + hbt.best_ask_tick) / 2.0
+        mid_price_chg[t] = mid_price_ticks[t] - mid_price_ticks[t - 1]
         # Records market order's arrival depth from the mid-price.
         if t >= 1:
-            mid_price_tick = mid_price_ticks[t - 1]
-            depth = -np.inf
-            for trade in hbt.last_trades:
-                side = trade[3]
-                trade_price_tick = trade[4] / hbt.tick_size
-
-                if side == BUY:
-                    depth = np.nanmax([trade_price_tick - mid_price_tick, depth])
-                else:
-                    depth = np.nanmax([mid_price_tick - trade_price_tick, depth])
-            arrival_depth[t] = depth
-            mid_price_chg[t] = mid_price_ticks[t] - mid_price_ticks[t - 1]
+            arrival_depth[t] = record_arrival_depths(hbt, mid_price_ticks[t - 1])
         hbt.clear_last_trades()
         #--------------------------------------------------------
         # Calibrates A, k and calculates the market volatility.
+        update_duration = refit_duration_in_second * elapse_cnt_in_second
+        win_size = window_size_in_second * elapse_cnt_in_second
         if t % update_duration == 0:
             if t >= win_size - 1:
-                # Calibrates A, k
-                tmp[:] = 0
-                lambda_ = measure_trading_intensity(
-                    arrival_depth[t + 1 - win_size:t + 1], tmp)
-                lambda_ = lambda_[:refit_tick_cnt] / window_size_in_second
-                x = ticks[:len(lambda_)]
-                y = np.log(lambda_)
-                k_, logA = linear_regression(x, y)
-                A = np.exp(logA)
-                k = -k_
-                # Updates the volatility.
-                volatility = np.nanstd(
-                    mid_price_chg[t + 1 - win_size:t + 1]
-                ) * np.sqrt(elapse_cnt_in_second)
-                # 1 seconds 
-                #--------------------------------------------------------
-                # Computes bid price and ask price.
-                c1, c2 = compute_coeff(gamma, gamma, delta, A, k)
-                half_spread = (c1 + delta / 2 * c2 * volatility) * adj1
-                skew = c2 * volatility * adj2
+                half_spread, skew, volatility, A, k = fit_parameters(
+                    arrival_depth[t + 1 - win_size:t + 1],
+                    mid_price_chg[t + 1 - win_size:t + 1],
+                    ticks,
+                    tmp
+                )
+
+        #--------------------------------------------------------
+        # Records variables and stats for analysis.
+        out[t, 0] = half_spread
+        out[t, 1] = skew
+        out[t, 2] = volatility
+        out[t, 3] = A
+        out[t, 4] = k
         
-        bid_price, ask_price, grid_interval = calculate_nearest_bid_ask_price(hbt, mid_price_tick, half_spread, skew)
+        bid_price, ask_price, grid_interval = calculate_nearest_bid_ask_price(
+            hbt, mid_price_ticks[t], half_spread, skew)
 
         #--------------------------------------------------------
         # Updates quotes.
@@ -150,14 +152,6 @@ def gridtrading_glft_mm(hbt, stat):
             # Posts an order if it doesn't exist.
             if order_id not in hbt.orders:
                 hbt.submit_sell_order(order_id, order_price, order_qty, GTX)
-
-        #--------------------------------------------------------
-        # Records variables and stats for analysis.
-        out[t, 0] = half_spread
-        out[t, 1] = skew
-        out[t, 2] = volatility
-        out[t, 3] = A
-        out[t, 4] = k
 
         t += 1
 
