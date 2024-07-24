@@ -1,9 +1,3 @@
-"""
-Question:
-
-1. What is the usage of eod snapshot?
-2. How to 
-"""
 from hftbacktest.data.utils import binancefutures
 from hftbacktest import HftBacktest, FeedLatency, SquareProbQueueModel, Linear, Stat
 from numba import njit
