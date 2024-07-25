@@ -1,23 +1,23 @@
 import numpy as np
 from numba import njit
-from calculators import (
+from strategy_calculators import (
     measure_trading_intensity,
     linear_regression,
     compute_coeff
 )
 from variables import (
-    MAX_REFIT_TICK_CNT, 
     NS_IN_ONE_SECOND,
     ELAPSE_IN_NS,
     FIT_WIN_SIZE
 )
+from variables import (
+    refit_tick_cnt,
+    gamma,
+    delta,
+    adj1,
+    adj2
+)
 
-refit_tick_cnt = 70
-assert refit_tick_cnt <= MAX_REFIT_TICK_CNT
-gamma = 0.05
-delta = 1
-adj1 = 1
-adj2 = 0.05
 
 @njit
 def fit_parameters(arrival_depth, mid_price_chg, ticks, tmp):
@@ -47,3 +47,14 @@ def fit_parameters(arrival_depth, mid_price_chg, ticks, tmp):
         A,
         k
     )
+
+@njit
+def calculate_nearest_bid_ask_price(hbt, mid_price_tick, half_spread, skew):
+    bid_depth = half_spread + skew * hbt.position
+    ask_depth = half_spread - skew * hbt.position
+    bid_price = min(mid_price_tick - bid_depth, hbt.best_bid_tick) * hbt.tick_size
+    ask_price = max(mid_price_tick + ask_depth, hbt.best_ask_tick) * hbt.tick_size
+    grid_interval = max(np.round(half_spread) * hbt.tick_size, hbt.tick_size)
+    bid_price = np.floor(bid_price / grid_interval) * grid_interval
+    ask_price = np.ceil(ask_price / grid_interval) * grid_interval
+    return bid_price, ask_price, grid_interval

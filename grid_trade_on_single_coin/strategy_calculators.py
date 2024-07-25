@@ -3,29 +3,6 @@ from numba import njit
 from hftbacktest import BUY
 
 @njit
-def record_arrival_depths(hbt, mid_price_tick):
-    depth = -np.inf
-    for trade in hbt.last_trades:
-        side = trade[3]
-        trade_price_tick = trade[4] / hbt.tick_size
-        if side == BUY:
-            depth = np.nanmax([trade_price_tick - mid_price_tick, depth])
-        else:
-            depth = np.nanmax([mid_price_tick - trade_price_tick, depth])
-    return depth
-
-@njit
-def calculate_nearest_bid_ask_price(hbt, mid_price_tick, half_spread, skew):
-    bid_depth = half_spread + skew * hbt.position
-    ask_depth = half_spread - skew * hbt.position
-    bid_price = min(mid_price_tick - bid_depth, hbt.best_bid_tick) * hbt.tick_size
-    ask_price = max(mid_price_tick + ask_depth, hbt.best_ask_tick) * hbt.tick_size
-    grid_interval = max(np.round(half_spread) * hbt.tick_size, hbt.tick_size)
-    bid_price = np.floor(bid_price / grid_interval) * grid_interval
-    ask_price = np.ceil(ask_price / grid_interval) * grid_interval
-    return bid_price, ask_price, grid_interval
-
-@njit
 def measure_trading_intensity(order_arrival_depth, out):
     max_tick = 0
     for depth in order_arrival_depth:
