@@ -14,8 +14,9 @@ def update_grids(hbt, grid_interval, bid_price, ask_price):
     hbt.clear_inactive_orders()
     # Creates a new grid for buy orders.
     new_bid_orders = Dict.empty(np.int64, np.float64)
+    _grid_num = grid_num // 2
     if hbt.position < max_position and np.isfinite(bid_price):
-        for i in range(grid_num):
+        for i in range(_grid_num):
             bid_price -= i * grid_interval
             bid_price_tick = round(bid_price / hbt.tick_size)
             # order price in tick is used as order id.
@@ -32,7 +33,7 @@ def update_grids(hbt, grid_interval, bid_price, ask_price):
     # Creates a new grid for sell orders.
     new_ask_orders = Dict.empty(np.int64, np.float64)
     if hbt.position > -max_position and np.isfinite(ask_price):
-        for i in range(grid_num):
+        for i in range(_grid_num):
             ask_price += i * grid_interval
             ask_price_tick = round(ask_price / hbt.tick_size)
             # order price in tick is used as order id.

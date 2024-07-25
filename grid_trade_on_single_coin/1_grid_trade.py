@@ -67,6 +67,23 @@ def gridtrading_glft_mm(hbt, stat):
         #--------------------------------------------------------
         # Updates quotes.
         update_grids(hbt, grid_interval, bid_price, ask_price)
+        mid_price = mid_price_ticks[t] * hbt.tick_size
+        print(
+            't', t,
+            '\tmid_price:', mid_price,
+            '\tmid_price_change:', mid_price_chg[t] * hbt.tick_size,
+            '\tgrid_interval:', grid_interval,
+            '\tbid_price %:', round((bid_price - mid_price) / mid_price * 100, 5), '%'
+            '\task_price %:', round((ask_price - mid_price) / mid_price * 100, 5), '%'
+        )
+        for order in hbt.orders.values():
+            print('order_id', order.order_id, 
+                'side', order.side,
+                'price %:', round((order.price - mid_price) / mid_price * 100, 5), '%',
+                'qty', order.qty,
+                'cancellable', order.cancellable
+                )
+
         t += 1
         if t >= BUFFER_SIZE:
             raise Exception
