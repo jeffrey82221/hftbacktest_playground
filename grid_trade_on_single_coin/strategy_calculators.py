@@ -1,6 +1,5 @@
 import numpy as np
 from numba import njit
-from hftbacktest import BUY
 
 @njit
 def measure_trading_intensity(order_arrival_depth, out):
