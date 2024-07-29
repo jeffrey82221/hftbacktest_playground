@@ -1,11 +1,9 @@
-import gzip
-from spot_loader import SpotEventLoader, EventLoader
+import os
+from spot_loader import SpotEventLoader
 
 for date_str in ['20240723', '20240724', '20240725']:
-    with open(f'data/raw/spot/nexousdt_{date_str}.dat', 'rb') as f:
-        compressed_data = gzip.compress(f.read())
-    with open(f'data/raw/spot/nexousdt_{date_str}.dat.gz', 'wb') as file:
-        file.write(compressed_data)
-
+    original_path = f'data/raw/spot/nexousdt_{date_str}.dat'
+    compressed_path = f'data/raw/spot/nexousdt_{date_str}.dat.gz'
+    os.system(f'gzip -c {original_path} > {compressed_path}')
     data = SpotEventLoader('nexousdt', 110, f'data/raw/spot/nexousdt_{date_str}.dat.gz').load()
     print(f'shape of nexo spot in {date_str} is: {data.shape}')

@@ -8,17 +8,36 @@ opt:
         best bid: 103
         best ask: 104
 """
+import os
 from hftbacktest.data.utils import binancefutures
-import gzip
+from hftbacktest.data.utils.snapshot import create_last_snapshot
 
-for date_str in ['20240723', '20240724', '20240725']:
-    with open(f'raw/nexousdt_{date_str}.dat', 'rb') as f:
-        compressed_data = gzip.compress(f.read())
-    with open(f'raw/nexousdt_{date_str}.dat.gz', 'wb') as file:
-        file.write(compressed_data)
-    binancefutures.convert(
-        f'raw/nexousdt_{date_str}.dat.gz',
-        output_filename=f'data/nexousdt_{date_str}.npz',
-        opt='',
-        compress=False
-    )
+turn_on_stage = ['eod'] # 'gzip', 'npz', 
+
+src_folder = '../../collect-binancefutures/example_data/binancefutures'
+for coin in ['btc', 'eth']:
+    for date_str in ['20240726', '20240727']:
+        original_path = f'{src_folder}/{coin}usdt_{date_str}.dat'
+        compressed_path = f'{src_folder}/{coin}usdt_{date_str}.dat.gz'
+        npz_path = f'{src_folder}/{coin}usdt_{date_str}.npz'
+        if 'gzip' in turn_on_stage:
+            compress_cmd = f'gzip -c {original_path} > {compressed_path}'
+            os.system(compress_cmd)
+            print(compress_cmd, 'done')
+        if 'npz' in turn_on_stage:
+            print(compressed_path, '-> npz start')
+            binancefutures.convert(
+                compressed_path,
+                output_filename=npz_path,
+                opt='',
+                compress=True
+            )
+            print(compressed_path, '-> npz done')
+        if 'eod' in turn_on_stage:
+            _ = create_last_snapshot(
+                [npz_path],
+                tick_size=0.1,
+                lot_size=0.001,
+                output_snapshot_filename=f'{src_folder}/{coin}usdt_{date_str}_eod.npz'
+            )
+            print(npz_path, '-> eod file done')
