@@ -8,6 +8,7 @@ from strategizer import (
     fit_parameters,
     calculate_nearest_bid_ask_price
 )
+from strategy_calculators import compute_coeff
 from grid_manager import update_grids
 from variables import (
     MAX_REFIT_TICK_CNT,
@@ -15,9 +16,14 @@ from variables import (
     BUFFER_SIZE,
     ELAPSE_IN_NS,
     REFIT_DURATION,
-    FIT_WIN_SIZE
+    FIT_WIN_SIZE,
+    gamma,
+    delta,
+    adj1,
+    adj2
 )
 
+VERBOSE = True
 @njit
 def gridtrading_glft_mm(hbt, stat):
     arrival_depth = np.full(BUFFER_SIZE, np.nan, np.float64)
@@ -31,6 +37,8 @@ def gridtrading_glft_mm(hbt, stat):
     skew = np.nan
     A = np.nan
     k = np.nan
+    c1 = np.nan
+    c2 = np.nan
     volatility = np.nan
     # Checks every 100 milliseconds.
     while hbt.elapse(ELAPSE_IN_NS):
@@ -47,12 +55,20 @@ def gridtrading_glft_mm(hbt, stat):
         win_size = FIT_WIN_SIZE * NS_IN_ONE_SECOND // ELAPSE_IN_NS
         if t % update_duration == 0:
             if t >= win_size - 1:
-                half_spread, skew, volatility, A, k = fit_parameters(
-                    arrival_depth[t + 1 - win_size:t + 1],
-                    mid_price_chg[t + 1 - win_size:t + 1],
-                    ticks,
-                    tmp
-                )
+                try:
+                    volatility, A, k = fit_parameters(
+                        arrival_depth[t + 1 - win_size:t + 1],
+                        mid_price_chg[t + 1 - win_size:t + 1],
+                        ticks,
+                        tmp
+                    )
+                    k = round(k, 8)
+                    if k > 0.0:
+                        c1, c2 = compute_coeff(gamma, gamma, delta, A, k)
+                        half_spread = (c1 + delta / 2 * c2 * volatility) * adj1
+                        skew = c2 * volatility * adj2
+                except Exception:
+                    pass
         #--------------------------------------------------------
         # Records variables and stats for analysis.
         out[t, 0] = half_spread
@@ -60,30 +76,41 @@ def gridtrading_glft_mm(hbt, stat):
         out[t, 2] = volatility
         out[t, 3] = A
         out[t, 4] = k
-        
         bid_price, ask_price, grid_interval = calculate_nearest_bid_ask_price(
             hbt, mid_price_ticks[t], half_spread, skew)
-
         #--------------------------------------------------------
         # Updates quotes.
         update_grids(hbt, grid_interval, bid_price, ask_price)
         mid_price = mid_price_ticks[t] * hbt.tick_size
-        print(
-            't', t,
-            '\tmid_price:', mid_price,
-            '\tmid_price_change:', mid_price_chg[t] * hbt.tick_size,
-            '\tgrid_interval:', grid_interval,
-            '\tbid_price %:', round((bid_price - mid_price) / mid_price * 100, 5), '%'
-            '\task_price %:', round((ask_price - mid_price) / mid_price * 100, 5), '%'
-        )
-        for order in hbt.orders.values():
-            print('order_id', order.order_id, 
-                'side', order.side,
-                'price %:', round((order.price - mid_price) / mid_price * 100, 5), '%',
-                'qty', order.qty,
-                'cancellable', order.cancellable
-                )
-
+        bid_percentage = round((bid_price - mid_price) / mid_price * 100, 5)
+        ask_percentage = round((ask_price - mid_price) / mid_price * 100, 5)
+        if bid_percentage < -100 or (VERBOSE and t % 1000 == 0):
+            print(
+                't', t,
+                '\tA:', A,
+                '\tK:', k,
+                '\tc1:', c1,
+                '\tc2:', c2,
+                '\tvolatility:', volatility,
+                '\thalf_spread:', half_spread,
+                '\tskew:', skew,
+                '\tmid_price:', mid_price,
+                '\tmid_price_change:', mid_price_chg[t] * hbt.tick_size,
+                '\tgrid_interval:', grid_interval,
+                '\tbid_price %:', bid_percentage, '%'
+                '\task_price %:', ask_percentage, '%'
+            )
+            """
+            for order in hbt.orders.values():
+                print('order_id', order.order_id, 
+                    'side', order.side,
+                    'price %:', round((order.price - mid_price) / mid_price * 100, 5), '%',
+                    'qty', order.qty,
+                    'cancellable', order.cancellable
+                    )
+            """
+            if bid_percentage < -100:
+                raise Exception
         t += 1
         if t >= BUFFER_SIZE:
             raise Exception
@@ -91,11 +118,12 @@ def gridtrading_glft_mm(hbt, stat):
         stat.record(hbt)
     return out[:t]
 
+src_folder = '../../collect-binancefutures/example_data/binancefutures'
 hbt = HftBacktest(
     [
-        'data/btcusdt_20230405.npz'
+        f'{src_folder}/btcusdt_20240727.npz'
     ],
-    snapshot='data/btcusdt_20230404_eod.npz',
+    snapshot=f'{src_folder}/btcusdt_20240726_eod.npz',
     tick_size=0.1,
     lot_size=0.001,
     maker_fee=0.0002,

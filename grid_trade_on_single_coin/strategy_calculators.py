@@ -40,5 +40,8 @@ def linear_regression(x, y):
 def compute_coeff(xi, gamma, delta, A, k):
     inv_k = np.divide(1, k)
     c1 = 1 / (xi * delta) * np.log(1 + xi * delta * inv_k)
-    c2 = np.sqrt(np.divide(gamma, 2 * A * delta * k) * ((1 + xi * delta * inv_k) ** (k / (xi * delta) + 1)))
+    c2 = np.sqrt(
+        np.divide(
+            gamma, 2 * A * delta * k
+        ) * ((1 + xi * delta * inv_k) ** (k / (xi * delta) + 1)))
     return c1, c2

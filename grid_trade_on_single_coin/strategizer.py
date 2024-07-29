@@ -34,15 +34,7 @@ def fit_parameters(arrival_depth, mid_price_chg, ticks, tmp):
     volatility = np.nanstd(
         mid_price_chg
     ) * np.sqrt(NS_IN_ONE_SECOND // ELAPSE_IN_NS)
-    # 1 seconds 
-    #--------------------------------------------------------
-    # Computes bid price and ask price.
-    c1, c2 = compute_coeff(gamma, gamma, delta, A, k)
-    half_spread = (c1 + delta / 2 * c2 * volatility) * adj1
-    skew = c2 * volatility * adj2
     return (
-        half_spread,
-        skew,
         volatility,
         A,
         k

@@ -2,9 +2,6 @@
 
 1) [X] Successfully calculate APR of an optimized grid trading strategy on ETH.
 
-2) [ ] Understand how to tune the parameters 
-
-
 
 # Plan:
 
@@ -14,21 +11,15 @@
 
 3. [X] List all variables and rename them to make them more understandable
 
-4. [ ] Visualize grids against mid-price
+4. Simplify the strategy: 
 
-5. [ ] Tune variables one-by-one to look for their influences
+- [ ] Set up a fix grid strategy with the following parameters:
+    - [ ] upper bound price
+    - [ ] lower bound price
+    - [ ] earning stop price
+    - [ ] lost stop price 
+    - [ ] trigger price
 
-- adj1 -> grid
-- adj2 -> grid
-- gamma -> grid
-- delta -> grid
-- refit_tick_cnt -> grid
-- order_qty -> earning
-- max_position -> earning
-- grid_num -> grid -> earning
-- FIT_WIN_SIZE -> grid -> earning
+5. [ ] Visualize grids against mid-price
 
-
-
-
-
+6. [ ] Tune the parameters to increase the earnings
