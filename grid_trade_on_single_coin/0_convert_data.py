@@ -16,7 +16,7 @@ turn_on_stage = ['eod'] # 'gzip', 'npz',
 
 src_folder = '../../collect-binancefutures/example_data/binancefutures'
 for coin in ['btc', 'eth']:
-    for date_str in ['20240726', '20240727']:
+    for date_str in ['20240726', '20240727', '20240728', '20240729']:
         original_path = f'{src_folder}/{coin}usdt_{date_str}.dat'
         compressed_path = f'{src_folder}/{coin}usdt_{date_str}.dat.gz'
         npz_path = f'{src_folder}/{coin}usdt_{date_str}.npz'

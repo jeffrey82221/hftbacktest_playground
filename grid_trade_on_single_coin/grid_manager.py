@@ -9,6 +9,37 @@ from variables import (
     grid_num
 )
 
+
+def set_grids(hbt, low, high, current_price, grid_num, order_qty):
+    grid_interval = (high - low // grid_num)
+    unit_order_qty = order_qty // grid_num
+    assert unit_order_qty >= 1
+    unit_order_qty = round(unit_order_qty / hbt.lot_size) * hbt.lot_size
+    price = low
+    while price <= high:
+        print('price:', price)
+        if price < current_price:
+            bid_price_tick = round(price / hbt.tick_size)
+            bid_price = bid_price_tick * hbt.tick_size
+            hbt.submit_buy_order(
+                bid_price_tick,
+                bid_price,
+                unit_order_qty,
+                GTX
+            )
+            print('submmit sell order', bid_price, unit_order_qty)
+        else:
+            ask_price_tick = round(price / hbt.tick_size)
+            ask_price = ask_price_tick * hbt.tick_size
+            hbt.submit_sell_order(
+                ask_price_tick,
+                ask_price,
+                unit_order_qty,
+                GTX
+            )
+            print('submmit sell order', ask_price, unit_order_qty)
+        price += grid_interval
+    
 @njit
 def update_grids(hbt, grid_interval, bid_price, ask_price):
     hbt.clear_inactive_orders()
