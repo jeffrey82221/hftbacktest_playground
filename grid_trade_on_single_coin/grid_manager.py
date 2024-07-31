@@ -9,37 +9,61 @@ from variables import (
     grid_num
 )
 
-
+@njit
 def set_grids(hbt, low, high, current_price, grid_num, order_qty):
-    grid_interval = (high - low // grid_num)
+    """
+    TODO:
+        - [ ] add stop loss and stop earning price
+        - [ ] add trigger price
+    """
+    assert low < current_price
+    assert current_price < high
+    grid_interval = ((high - low) // grid_num)
+    print('grid_interval:', grid_interval)
     unit_order_qty = order_qty // grid_num
     assert unit_order_qty >= 1
     unit_order_qty = round(unit_order_qty / hbt.lot_size) * hbt.lot_size
     price = low
+    bid_prices = []
+    ask_prices = []
     while price <= high:
         print('price:', price)
         if price < current_price:
             bid_price_tick = round(price / hbt.tick_size)
             bid_price = bid_price_tick * hbt.tick_size
-            hbt.submit_buy_order(
-                bid_price_tick,
-                bid_price,
-                unit_order_qty,
-                GTX
-            )
-            print('submmit sell order', bid_price, unit_order_qty)
+            bid_prices.append(bid_price)
         else:
             ask_price_tick = round(price / hbt.tick_size)
             ask_price = ask_price_tick * hbt.tick_size
-            hbt.submit_sell_order(
-                ask_price_tick,
+            ask_prices.append(ask_price)
+        price += grid_interval
+    for i in range(len(ask_prices)):
+        hbt.submit_buy_order(
+            i,
+            current_price,
+            unit_order_qty,
+            GTX
+        )
+        print('submmit buy order', current_price, unit_order_qty)
+    i += 1
+    for ask_price in ask_prices:
+        hbt.submit_sell_order(
+                i,
                 ask_price,
                 unit_order_qty,
                 GTX
             )
-            print('submmit sell order', ask_price, unit_order_qty)
-        price += grid_interval
-    
+        i+=1
+        print('submmit sell order', ask_price, unit_order_qty)
+    for bid_price in bid_prices:
+        hbt.submit_buy_order(
+                i,
+                bid_price,
+                unit_order_qty,
+                GTX
+            )
+        i+=1
+        print('submmit buy order', bid_price, unit_order_qty)
 @njit
 def update_grids(hbt, grid_interval, bid_price, ask_price):
     hbt.clear_inactive_orders()

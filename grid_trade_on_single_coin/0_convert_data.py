@@ -12,7 +12,7 @@ import os
 from hftbacktest.data.utils import binancefutures
 from hftbacktest.data.utils.snapshot import create_last_snapshot
 
-turn_on_stage = ['eod'] # 'gzip', 'npz', 
+turn_on_stage = ['gzip', 'npz', 'eod'] 
 
 src_folder = '../../collect-binancefutures/example_data/binancefutures'
 for coin in ['btc', 'eth']:
